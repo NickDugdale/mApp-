@@ -76,8 +76,10 @@
 
   .transcript{
     margin-top:14px;padding:12px 14px;background:var(--panel-2);border:1px solid var(--line);border-radius:12px;
-    font-size:14.5px;line-height:1.5;color:var(--text);display:none;
+    font-size:14.5px;line-height:1.5;color:var(--text);display:none;min-height:22px;
   }
+  .transcript:focus{outline:none;border-color:var(--amber-dim);}
+  .transcript:empty:before{content:attr(data-placeholder);color:var(--text-muted);}
   .transcript.show{display:block;}
 
   .status-line{
@@ -157,7 +159,8 @@
     </div>
   </div>
 
-  <div class="transcript" id="transcript"></div>
+  <div class="transcript" id="transcript" contenteditable="true"></div>
+  <button class="btn btn-primary" id="sendBtn" style="display:none;margin-top:10px;">Get routes</button>
   <div class="status-line" id="statusLine"><span class="pulse"></span><span id="statusText">Charting routes…</span></div>
 
   <div class="results" id="results"></div>
@@ -206,57 +209,105 @@ window.addEventListener('load', ()=>{
 });
 
 // ---------- Speech recognition ----------
+// Mobile browsers (especially iOS Safari) end a recognition session after any short pause,
+// even mid-sentence. To support longer, natural speech with pauses, the mic button acts as a
+// toggle: it keeps restarting the recognizer in the background until you tap it again to stop,
+// stitching each chunk onto a running transcript. The transcript is editable and nothing is
+// sent until you tap "Get routes", so a mis-heard word or an early cutoff never loses your input.
 const micBtn = document.getElementById('micBtn');
 const micPrimary = document.getElementById('micPrimary');
 const transcriptEl = document.getElementById('transcript');
+const sendBtn = document.getElementById('sendBtn');
 const statusLine = document.getElementById('statusLine');
 const statusText = document.getElementById('statusText');
 const resultsEl = document.getElementById('results');
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognizing = false;
 let recognition = null;
+let listening = false;       // true from when you tap mic until you tap it again
+let committedText = '';      // finalized speech so far this session
+let restartTimer = null;
+
+function currentTranscript(){
+  return transcriptEl.textContent.trim();
+}
+function updateSendVisibility(){
+  sendBtn.style.display = currentTranscript() ? 'block' : 'none';
+}
 
 if(SpeechRecognition){
   recognition = new SpeechRecognition();
   recognition.lang = 'en-GB';
   recognition.interimResults = true;
-  recognition.continuous = false;
+  recognition.continuous = true; // ignored on some mobile browsers, harmless where unsupported
 
-  recognition.onstart = ()=>{
-    recognizing = true;
-    micBtn.classList.add('live');
-    micPrimary.textContent = 'Listening…';
-    transcriptEl.classList.add('show');
-    transcriptEl.textContent = '';
-    resultsEl.classList.remove('show');
-    resultsEl.innerHTML = '';
-  };
   recognition.onresult = (e)=>{
-    let text = '';
-    for(let i=0;i<e.results.length;i++) text += e.results[i][0].transcript;
-    transcriptEl.textContent = text;
+    let interim = '';
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const chunk = e.results[i][0].transcript;
+      if(e.results[i].isFinal) committedText += chunk + ' ';
+      else interim += chunk;
+    }
+    transcriptEl.textContent = (committedText + interim).trim();
+    updateSendVisibility();
   };
+
   recognition.onend = ()=>{
-    recognizing = false;
-    micBtn.classList.remove('live');
-    micPrimary.textContent = 'Tap and speak your journey';
-    const finalText = transcriptEl.textContent.trim();
-    if(finalText) askGemini(finalText);
+    // If the user hasn't tapped stop, the browser just paused itself — restart seamlessly.
+    if(listening){
+      restartTimer = setTimeout(()=>{
+        try{ recognition.start(); }catch(e){}
+      }, 250);
+    } else {
+      micBtn.classList.remove('live');
+      micPrimary.textContent = currentTranscript() ? 'Tap to add more' : 'Tap and speak your journey';
+    }
   };
+
   recognition.onerror = (e)=>{
-    recognizing = false;
+    if(e.error === 'no-speech' || e.error === 'aborted'){
+      // benign — restart will happen via onend if still listening
+      return;
+    }
+    listening = false;
     micBtn.classList.remove('live');
-    micPrimary.textContent = 'Didn\'t catch that — tap to retry';
+    micPrimary.textContent = 'Mic error — tap to retry';
   };
 } else {
-  micPrimary.textContent = 'Voice input not supported in this browser';
+  micPrimary.textContent = 'Voice input not supported — type below instead';
+  transcriptEl.classList.add('show');
+  transcriptEl.setAttribute('data-placeholder', 'Type your journey here…');
 }
+
+// Manual typing/editing always works, mic or not.
+transcriptEl.addEventListener('input', ()=>{
+  committedText = transcriptEl.textContent;
+  updateSendVisibility();
+});
 
 micBtn.addEventListener('click', ()=>{
   if(!recognition) return;
-  if(recognizing){ recognition.stop(); return; }
+  if(listening){
+    // Stop listening, keep whatever transcript we have.
+    listening = false;
+    clearTimeout(restartTimer);
+    recognition.stop();
+    return;
+  }
+  listening = true;
+  micBtn.classList.add('live');
+  micPrimary.textContent = 'Listening… tap again to stop';
+  transcriptEl.classList.add('show');
+  resultsEl.classList.remove('show');
+  resultsEl.innerHTML = '';
   try{ recognition.start(); }catch(e){}
+});
+
+sendBtn.addEventListener('click', ()=>{
+  const text = currentTranscript();
+  if(!text) return;
+  if(listening){ listening = false; clearTimeout(restartTimer); recognition && recognition.stop(); }
+  askGemini(text);
 });
 
 // ---------- Gemini call ----------
@@ -308,6 +359,10 @@ Give 2-4 realistic route options based on your general knowledge of UK transport
     const parsed = JSON.parse(raw);
     renderResults(parsed);
     speak(parsed.spoken_summary);
+    committedText = '';
+    transcriptEl.textContent = '';
+    updateSendVisibility();
+    micPrimary.textContent = 'Tap and speak your journey';
   }catch(err){
     statusText.textContent = 'Something went wrong — check your API key or connection';
     console.error(err);
