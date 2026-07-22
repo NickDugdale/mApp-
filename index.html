@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0B1E2D">
+<title>Waypoint</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B1E2D;
+    --panel:#122A3D;
+    --panel-2:#0E2333;
+    --line:#1E3B52;
+    --amber:#E8A33D;
+    --amber-dim:#8A6428;
+    --teal:#3FA796;
+    --text:#E9EEF2;
+    --text-muted:#7C93A3;
+    --danger:#D9695F;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;overscroll-behavior:none;}
+  #map{position:absolute;inset:0;filter:saturate(0.35) brightness(0.75) contrast(1.05);}
+  .leaflet-control-attribution{background:rgba(11,30,45,0.7)!important;color:var(--text-muted)!important;font-size:10px;}
+  .leaflet-control-attribution a{color:var(--text-muted)!important;}
+
+  .topbar{
+    position:absolute;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top) + 14px) 16px 10px;
+    display:flex;align-items:center;justify-content:space-between;
+    background:linear-gradient(180deg, rgba(11,30,45,0.92) 0%, rgba(11,30,45,0.55) 70%, transparent 100%);
+    pointer-events:none;
+  }
+  .brand{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:19px;letter-spacing:0.02em;display:flex;align-items:center;gap:8px;pointer-events:auto;}
+  .brand .dot{width:8px;height:8px;border-radius:50%;background:var(--amber);box-shadow:0 0 8px var(--amber);}
+  .gear-btn{
+    pointer-events:auto;width:36px;height:36px;border-radius:50%;background:var(--panel);
+    border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--text-muted);
+  }
+
+  .sheet{
+    position:absolute;left:0;right:0;bottom:0;
+    background:var(--panel);
+    border-top:1px solid var(--line);
+    border-radius:20px 20px 0 0;
+    box-shadow:0 -8px 30px rgba(0,0,0,0.45);
+    padding:14px 16px calc(env(safe-area-inset-bottom) + 16px);
+    max-height:72vh;overflow-y:auto;
+  }
+  .grabber{width:36px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 14px;}
+
+  .eyebrow{
+    font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;
+    color:var(--text-muted);margin-bottom:8px;
+  }
+
+  .mic-row{display:flex;align-items:center;gap:12px;}
+  .mic-btn{
+    flex-shrink:0;width:64px;height:64px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #1A3A52, var(--panel-2));
+    border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;
+    position:relative;transition:box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+  .mic-btn.live{border-color:var(--amber);box-shadow:0 0 0 6px rgba(232,163,61,0.12), 0 0 22px rgba(232,163,61,0.35);}
+  .mic-btn svg{width:26px;height:26px;stroke:var(--amber);}
+  .mic-hint{flex:1;}
+  .mic-hint .primary{font-size:15px;font-weight:500;}
+  .mic-hint .secondary{font-size:12.5px;color:var(--text-muted);margin-top:2px;}
+
+  .transcript{
+    margin-top:14px;padding:12px 14px;background:var(--panel-2);border:1px solid var(--line);border-radius:12px;
+    font-size:14.5px;line-height:1.5;color:var(--text);display:none;
+  }
+  .transcript.show{display:block;}
+
+  .status-line{
+    margin-top:10px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--teal);
+    display:none;align-items:center;gap:6px;
+  }
+  .status-line.show{display:flex;}
+  .status-line .pulse{width:6px;height:6px;border-radius:50%;background:var(--teal);animation:pulse 1.2s infinite;}
+  @keyframes pulse{0%,100%{opacity:0.3;}50%{opacity:1;}}
+
+  .results{margin-top:16px;display:none;flex-direction:column;gap:10px;}
+  .results.show{display:flex;}
+  .route-card{
+    background:var(--panel-2);border:1px solid var(--line);border-radius:14px;padding:13px 14px;
+  }
+  .route-card.recommended{border-color:var(--amber-dim);background:linear-gradient(180deg, rgba(232,163,61,0.08), rgba(18,42,61,0.4));}
+  .route-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+  .route-name{font-family:'Space Grotesk',sans-serif;font-weight:600;font-size:14.5px;}
+  .route-tag{
+    font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:0.08em;text-transform:uppercase;
+    color:var(--bg);background:var(--amber);padding:2px 7px;border-radius:20px;font-weight:600;
+  }
+  .route-meta{display:flex;gap:16px;font-family:'IBM Plex Mono',monospace;font-size:13px;color:var(--text-muted);}
+  .route-meta b{color:var(--text);font-weight:500;}
+  .route-note{margin-top:7px;font-size:13px;color:var(--text-muted);line-height:1.45;}
+
+  .keyline{height:1px;background:var(--line);margin:16px 0 12px;}
+
+  .settings-panel{
+    position:absolute;inset:0;background:rgba(6,16,24,0.85);backdrop-filter:blur(3px);
+    display:none;align-items:flex-end;z-index:50;
+  }
+  .settings-panel.show{display:flex;}
+  .settings-sheet{
+    width:100%;background:var(--panel);border-radius:20px 20px 0 0;padding:20px 18px calc(env(safe-area-inset-bottom) + 20px);
+    border-top:1px solid var(--line);
+  }
+  .settings-sheet h2{font-family:'Space Grotesk',sans-serif;font-size:17px;margin:0 0 4px;}
+  .settings-sheet p{font-size:12.5px;color:var(--text-muted);margin:0 0 16px;line-height:1.5;}
+  .field label{display:block;font-size:12px;color:var(--text-muted);margin-bottom:6px;font-family:'IBM Plex Mono',monospace;}
+  .field input{
+    width:100%;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;color:var(--text);
+    padding:11px 12px;font-size:14px;font-family:'IBM Plex Mono',monospace;margin-bottom:14px;
+  }
+  .field input:focus{outline:none;border-color:var(--amber-dim);}
+  .btn{
+    width:100%;padding:13px;border-radius:12px;border:none;font-weight:600;font-size:14.5px;
+    font-family:'Inter',sans-serif;cursor:pointer;
+  }
+  .btn-primary{background:var(--amber);color:#1A1204;}
+  .btn-ghost{background:transparent;color:var(--text-muted);margin-top:8px;}
+  .link{color:var(--teal);text-decoration:none;font-size:12px;}
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="topbar">
+  <div class="brand"><span class="dot"></span>Waypoint</div>
+  <button class="gear-btn" onclick="document.getElementById('settings').classList.add('show')">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7C93A3" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+  </button>
+</div>
+
+<div class="sheet">
+  <div class="grabber"></div>
+  <div class="eyebrow">Plan a journey</div>
+
+  <div class="mic-row">
+    <button class="mic-btn" id="micBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+    </button>
+    <div class="mic-hint">
+      <div class="primary" id="micPrimary">Tap and speak your journey</div>
+      <div class="secondary" id="micSecondary">e.g. "Heathrow Terminal 5 to Luton, cheapest option, I don't mind a 20 minute walk"</div>
+    </div>
+  </div>
+
+  <div class="transcript" id="transcript"></div>
+  <div class="status-line" id="statusLine"><span class="pulse"></span><span id="statusText">Charting routes…</span></div>
+
+  <div class="results" id="results"></div>
+</div>
+
+<div class="settings-panel" id="settings">
+  <div class="settings-sheet">
+    <h2>Setup</h2>
+    <p>Waypoint calls the Gemini API directly from your phone to reason over your route request. Your key stays stored only on this device (localStorage) — it's never sent anywhere except Google's API.</p>
+    <div class="field">
+      <label>Gemini API Key</label>
+      <input type="password" id="apiKeyInput" placeholder="AIza…" autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <a class="link" href="https://aistudio.google.com/apikey" target="_blank">Get a free key at aistudio.google.com/apikey →</a>
+    <div style="margin-top:18px;">
+      <button class="btn btn-primary" onclick="saveKey()">Save key</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('settings').classList.remove('show')">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ---------- Map ----------
+const map = L.map('map', {zoomControl:false, attributionControl:true}).setView([51.5074, -0.1278], 11);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution:'&copy; OpenStreetMap &copy; CARTO', maxZoom:19
+}).addTo(map);
+let routeLine = null;
+
+navigator.geolocation?.getCurrentPosition(pos=>{
+  map.setView([pos.coords.latitude, pos.coords.longitude], 13);
+  L.circleMarker([pos.coords.latitude, pos.coords.longitude], {radius:7, color:'#E8A33D', fillColor:'#E8A33D', fillOpacity:0.9}).addTo(map);
+}, ()=>{}, {timeout:4000});
+
+// ---------- API key storage ----------
+function saveKey(){
+  const v = document.getElementById('apiKeyInput').value.trim();
+  if(v){ localStorage.setItem('waypoint_gemini_key', v); }
+  document.getElementById('settings').classList.remove('show');
+}
+window.addEventListener('load', ()=>{
+  const saved = localStorage.getItem('waypoint_gemini_key');
+  if(saved) document.getElementById('apiKeyInput').value = saved;
+  else document.getElementById('settings').classList.add('show');
+});
+
+// ---------- Speech recognition ----------
+const micBtn = document.getElementById('micBtn');
+const micPrimary = document.getElementById('micPrimary');
+const transcriptEl = document.getElementById('transcript');
+const statusLine = document.getElementById('statusLine');
+const statusText = document.getElementById('statusText');
+const resultsEl = document.getElementById('results');
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognizing = false;
+let recognition = null;
+
+if(SpeechRecognition){
+  recognition = new SpeechRecognition();
+  recognition.lang = 'en-GB';
+  recognition.interimResults = true;
+  recognition.continuous = false;
+
+  recognition.onstart = ()=>{
+    recognizing = true;
+    micBtn.classList.add('live');
+    micPrimary.textContent = 'Listening…';
+    transcriptEl.classList.add('show');
+    transcriptEl.textContent = '';
+    resultsEl.classList.remove('show');
+    resultsEl.innerHTML = '';
+  };
+  recognition.onresult = (e)=>{
+    let text = '';
+    for(let i=0;i<e.results.length;i++) text += e.results[i][0].transcript;
+    transcriptEl.textContent = text;
+  };
+  recognition.onend = ()=>{
+    recognizing = false;
+    micBtn.classList.remove('live');
+    micPrimary.textContent = 'Tap and speak your journey';
+    const finalText = transcriptEl.textContent.trim();
+    if(finalText) askGemini(finalText);
+  };
+  recognition.onerror = (e)=>{
+    recognizing = false;
+    micBtn.classList.remove('live');
+    micPrimary.textContent = 'Didn\'t catch that — tap to retry';
+  };
+} else {
+  micPrimary.textContent = 'Voice input not supported in this browser';
+}
+
+micBtn.addEventListener('click', ()=>{
+  if(!recognition) return;
+  if(recognizing){ recognition.stop(); return; }
+  try{ recognition.start(); }catch(e){}
+});
+
+// ---------- Gemini call ----------
+async function askGemini(userText){
+  const key = localStorage.getItem('waypoint_gemini_key');
+  if(!key){
+    document.getElementById('settings').classList.add('show');
+    return;
+  }
+  statusLine.classList.add('show');
+  statusText.textContent = 'Charting routes…';
+  resultsEl.classList.remove('show');
+  resultsEl.innerHTML = '';
+
+  const systemPrompt = `You are Waypoint, a journey-planning assistant. The user will describe a trip in natural language: origin, destination, budget or cost preference, willingness to walk, and any mode preferences (walk, public transport, driving/parking).
+
+Respond ONLY with valid JSON, no markdown fences, no preamble, matching exactly this shape:
+{
+  "origin": "string",
+  "destination": "string",
+  "routes": [
+    {
+      "name": "string, e.g. 'Rail + walk' or 'Drive + park at Luton Parkway'",
+      "recommended": true or false,
+      "cost_gbp": number or null,
+      "duration_mins": number or null,
+      "walk_mins": number or null,
+      "note": "one or two sentence explanation of the tradeoff, in plain conversational English"
+    }
+  ],
+  "spoken_summary": "a short 2-3 sentence natural-language summary of the best option and why, written to be read aloud"
+}
+
+Give 2-4 realistic route options based on your general knowledge of UK transport (rail, coach, tube, driving, parking). Mark exactly one route as recommended based on what the user asked for. If you don't have precise live fares/times, give a reasonable estimate and say so briefly in the note rather than inventing false precision.`;
+
+  try{
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        systemInstruction: { parts:[{text: systemPrompt}] },
+        contents: [{ role:'user', parts:[{text:userText}] }],
+        generationConfig: { temperature:0.4 }
+      })
+    });
+    const data = await resp.json();
+    let raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    raw = raw.replace(/```json|```/g,'').trim();
+    const parsed = JSON.parse(raw);
+    renderResults(parsed);
+    speak(parsed.spoken_summary);
+  }catch(err){
+    statusText.textContent = 'Something went wrong — check your API key or connection';
+    console.error(err);
+  }finally{
+    statusLine.classList.remove('show');
+  }
+}
+
+function renderResults(parsed){
+  resultsEl.innerHTML = '';
+  (parsed.routes || []).forEach(r=>{
+    const card = document.createElement('div');
+    card.className = 'route-card' + (r.recommended ? ' recommended' : '');
+    card.innerHTML = `
+      <div class="route-head">
+        <div class="route-name">${escapeHtml(r.name || 'Route')}</div>
+        ${r.recommended ? '<div class="route-tag">Best match</div>' : ''}
+      </div>
+      <div class="route-meta">
+        ${r.cost_gbp != null ? `<span><b>£${r.cost_gbp}</b></span>` : ''}
+        ${r.duration_mins != null ? `<span><b>${r.duration_mins}</b> min</span>` : ''}
+        ${r.walk_mins != null ? `<span><b>${r.walk_mins}</b> min walk</span>` : ''}
+      </div>
+      ${r.note ? `<div class="route-note">${escapeHtml(r.note)}</div>` : ''}
+    `;
+    resultsEl.appendChild(card);
+  });
+  resultsEl.classList.add('show');
+}
+
+function escapeHtml(s){
+  const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+}
+
+function speak(text){
+  if(!text || !window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'en-GB';
+  u.rate = 1.0;
+  window.speechSynthesis.speak(u);
+}
+</script>
+</body>
+</html>
